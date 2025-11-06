@@ -21,20 +21,33 @@ import android.webkit.WebView;
 import android.widget.EditText;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
+import com.google.firebase.auth.AuthResult;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
+
 import org.json.JSONException;
 
+import java.io.File;
+import java.io.Serializable;
+import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends Activity {
     private static final String TAG = "HFM_MainActivity";
     private static final int STORAGE_PERMISSION_REQUEST_CODE = 456;
-    // --- UPDATE 1: Add a new request code for the notification permission ---
     private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 457;
+    private static final int DROP_FILE_PICKER_REQUEST_CODE = 999;
 
     private WebView webView;
+    private FirebaseAuth mAuth;
+    private ArrayList<String> filesToSendViaDrop;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,8 +69,10 @@ public class MainActivity extends Activity {
         }
         webView.addJavascriptInterface(new WebAppInterface(this), "Android");
 
-        // --- UPDATE 2: Start the permission request sequence ---
+        mAuth = FirebaseAuth.getInstance();
+
         requestFilePermissions();
+        signInAnonymously();
         webView.loadUrl("file:///android_asset/webview-app.html");
     }
 
@@ -70,11 +85,29 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void signInAnonymously() {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            mAuth.signInAnonymously()
+                .addOnCompleteListener(this, new OnCompleteListener<AuthResult>() {
+                    @Override
+                    public void onComplete(@NonNull Task<AuthResult> task) {
+                        if (task.isSuccessful()) {
+                            Log.d(TAG, "signInAnonymously:success");
+                        } else {
+                            Log.w(TAG, "signInAnonymously:failure", task.getException());
+                            Toast.makeText(MainActivity.this, "Anonymous authentication failed.", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                });
+        } else {
+            Log.d(TAG, "User already signed in anonymously with UID: " + currentUser.getUid());
+        }
+    }
+
     private void requestFilePermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) { // Android 11+
             if (!Environment.isExternalStorageManager()) {
-                // For Android 11+, we need to guide the user to the settings screen
-                // to grant "All Files Access".
                 try {
                     Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
                     intent.addCategory("android.intent.category.DEFAULT");
@@ -86,66 +119,131 @@ public class MainActivity extends Activity {
                     startActivityForResult(intent, STORAGE_PERMISSION_REQUEST_CODE);
                 }
             } else {
-                // If we already have file permission, proceed to check for notification permission.
                 requestNotificationPermission();
             }
         } else { // Android 10 and below
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                // For older versions, use the standard runtime permission dialog.
                 ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, STORAGE_PERMISSION_REQUEST_CODE);
             } else {
-                // If we already have file permission, proceed to check for notification permission.
                 requestNotificationPermission();
             }
         }
     }
 
-    // --- UPDATE 3: Add new method to request notification permission ---
     private void requestNotificationPermission() {
-        // Notification permission is only required on Android 13 (API 33) and above.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                // If permission is not granted, request it from the user.
                 ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST_CODE);
             }
         }
     }
 
-    // --- UPDATE 4: Re-implement onActivityResult to handle the result from the settings screen ---
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == STORAGE_PERMISSION_REQUEST_CODE) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 if (Environment.isExternalStorageManager()) {
-                    // Permission has been granted. Now check for notification permission.
                     requestNotificationPermission();
                 } else {
                     Toast.makeText(this, "All Files Access permission is required for the app to function correctly.", Toast.LENGTH_LONG).show();
                 }
             }
+        } else if (requestCode == DROP_FILE_PICKER_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
+            if (data != null && data.hasExtra("picked_files")) {
+                filesToSendViaDrop = data.getStringArrayListExtra("picked_files");
+                if (filesToSendViaDrop != null && !filesToSendViaDrop.isEmpty()) {
+                    showSendToDropDialog();
+                }
+            }
         }
     }
 
-    // --- UPDATE 5: Implement onRequestPermissionsResult to handle dialog results ---
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == STORAGE_PERMISSION_REQUEST_CODE) {
-            // This handles the result for older Android versions (pre-Android 11)
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // Storage permission granted, now check for notification permission.
                 requestNotificationPermission();
             } else {
                 Toast.makeText(this, "Storage permission is required for the app to function.", Toast.LENGTH_LONG).show();
             }
         } else if (requestCode == NOTIFICATION_PERMISSION_REQUEST_CODE) {
-            // This handles the result for the notification permission on Android 13+
             if (grantResults.length > 0 && grantResults[0] != PackageManager.PERMISSION_GRANTED) {
                 Toast.makeText(this, "Notifications will be disabled.", Toast.LENGTH_SHORT).show();
             }
         }
     }
+    
+    private String generateSecretNumber() {
+        SecureRandom random = new SecureRandom();
+        byte[] bytes = new byte[16];
+        random.nextBytes(bytes);
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private void showSendToDropDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        LayoutInflater inflater = this.getLayoutInflater();
+        View dialogView = inflater.inflate(R.layout.dialog_send_drop, null);
+        final EditText receiverUsernameInput = dialogView.findViewById(R.id.edit_text_receiver_username);
+
+        builder.setView(dialogView)
+                .setPositiveButton("Send", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int id) {
+                        String receiverUsername = receiverUsernameInput.getText().toString().trim();
+                        if (receiverUsername.isEmpty()) {
+                            Toast.makeText(MainActivity.this, "Receiver username cannot be empty.", Toast.LENGTH_SHORT).show();
+                        } else {
+                            showSenderWarningDialog(receiverUsername);
+                        }
+                    }
+                })
+                .setNegativeButton("Cancel", null);
+        builder.create().show();
+    }
+    
+    private void showSenderWarningDialog(final String receiverUsername) {
+        final String secretNumber = generateSecretNumber();
+
+        new AlertDialog.Builder(this)
+            .setTitle("Important: Connection Stability")
+            .setMessage("You are about to act as a temporary server for this file transfer.\n\n"
+                    + "Please keep the app open and maintain a stable internet connection until the transfer is complete.\n\n"
+                    + "Your Secret Number for this transfer is:\n" + secretNumber + "\n\nShare this number with the receiver.")
+            .setPositiveButton("I Understand, Start Sending", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    startSenderService(receiverUsername, secretNumber);
+                }
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void startSenderService(String receiverUsername, String secretNumber) {
+        if (filesToSendViaDrop == null || filesToSendViaDrop.isEmpty()) {
+            Toast.makeText(this, "Error: No file selected to send.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // SenderService will only handle one file at a time per the plan.
+        String filePath = filesToSendViaDrop.get(0);
+
+        Intent intent = new Intent(this, SenderService.class);
+        intent.setAction(SenderService.ACTION_START_SEND);
+        intent.putExtra(SenderService.EXTRA_FILE_PATH, filePath);
+        intent.putExtra(SenderService.EXTRA_RECEIVER_USERNAME, receiverUsername);
+        intent.putExtra(SenderService.EXTRA_SECRET_NUMBER, secretNumber);
+        ContextCompat.startForegroundService(this, intent);
+
+        filesToSendViaDrop = null;
+    }
+
 
     public class WebAppInterface {
         Context mContext;
@@ -287,6 +385,56 @@ public class MainActivity extends Activity {
 						builder.create().show();
 					}
 				});
+        }
+
+        // --- NEW JAVASCRIPT INTERFACE METHODS FOR HFM MESSENGER DROP ---
+
+        @JavascriptInterface
+        public void sendViaDrop() {
+            Log.d("HFMApp_WebView", "sendViaDrop() called.");
+            Intent intent = new Intent(mContext, CategoryPickerActivity.class);
+            startActivityForResult(intent, DROP_FILE_PICKER_REQUEST_CODE);
+        }
+
+        @JavascriptInterface
+        public void receiveViaDrop() {
+            Log.d("HFMApp_WebView", "receiveViaDrop() called.");
+            Intent intent = new Intent(mContext, HFMDropActivity.class);
+            mContext.startActivity(intent);
+        }
+
+        @JavascriptInterface
+        public void regenerateHFMId() {
+            Log.d("HFMApp_WebView", "regenerateHFMId() called.");
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    new AlertDialog.Builder(mContext)
+                        .setTitle("Regenerate HFM ID")
+                        .setMessage("Are you sure? This will permanently delete your current anonymous ID. This action cannot be undone and may disrupt pending transfers.")
+                        .setPositiveButton("Regenerate", new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                final FirebaseUser user = mAuth.getCurrentUser();
+                                if (user != null) {
+                                    user.delete().addOnCompleteListener(new OnCompleteListener<Void>() {
+                                        @Override
+                                        public void onComplete(@NonNull Task<Void> task) {
+                                            if (task.isSuccessful()) {
+                                                Toast.makeText(mContext, "ID regenerated.", Toast.LENGTH_SHORT).show();
+                                                signInAnonymously();
+                                            } else {
+                                                Toast.makeText(mContext, "Failed to regenerate ID.", Toast.LENGTH_SHORT).show();
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        })
+                        .setNegativeButton("Cancel", null)
+                        .show();
+                }
+            });
         }
     }
 }
