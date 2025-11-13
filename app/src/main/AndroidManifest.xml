@@ -57,6 +57,12 @@
             android:label="Verify Your Identity"
             android:exported="false" />
 
+        <!-- THIS IS THE NEW ACTIVITY DECLARATION FOR THE LOGIN SCREEN -->
+        <activity
+            android:name=".LoginActivity"
+            android:label="Sign In"
+            android:exported="false" />
+
         <!-- The "Always Listening" background service -->
         <service
             android:name=".services.VoiceRecognitionService"
