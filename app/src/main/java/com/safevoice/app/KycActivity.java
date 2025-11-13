@@ -109,9 +109,8 @@ public class KycActivity extends AppCompatActivity {
                     ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
                     bindCameraUseCases(cameraProvider);
                 } catch (Exception e) {
-                    // --- THIS IS THE FIX ---
-                    // Catch any exception during camera initialization and show a detailed report.
-                    Log.e(TAG, "Failed to start camera.", e);
+                    // This will catch errors getting the provider, but likely not the binding error.
+                    Log.e(TAG, "Failed to get camera provider.", e);
                     showErrorDialog(e);
                 }
             }
@@ -131,8 +130,15 @@ public class KycActivity extends AppCompatActivity {
 
         imageAnalysis.setAnalyzer(analysisExecutor, new KycImageAnalyzer());
 
-        cameraProvider.unbindAll();
-        cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
+        try {
+            // --- THIS IS THE CORRECTED FIX ---
+            // The try-catch block now wraps the line that is actually crashing.
+            cameraProvider.unbindAll();
+            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to bind camera use cases.", e);
+            showErrorDialog(e);
+        }
     }
 
     private void updateUIForState() {
@@ -336,7 +342,6 @@ public class KycActivity extends AppCompatActivity {
         }, 3000);
     }
 
-    // --- NEW: Method to convert an exception to a string for the report ---
     private String getStackTraceAsString(Exception e) {
         StringWriter sw = new StringWriter();
         PrintWriter pw = new PrintWriter(sw);
@@ -344,7 +349,6 @@ public class KycActivity extends AppCompatActivity {
         return sw.toString();
     }
 
-    // --- NEW: Method to show the alert dialog with the crash report ---
     private void showErrorDialog(Exception e) {
         if (isFinishing() || isDestroyed()) {
             return;
@@ -352,7 +356,6 @@ public class KycActivity extends AppCompatActivity {
 
         final String errorReport = getStackTraceAsString(e);
 
-        // We must run this on the UI thread
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
@@ -363,10 +366,10 @@ public class KycActivity extends AppCompatActivity {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         dialog.dismiss();
-                        finish(); // Close the activity after user sees the error
+                        finish();
                     }
                 });
-                builder.setCancelable(false); // Prevent dismissing by tapping outside
+                builder.setCancelable(false);
                 AlertDialog dialog = builder.create();
                 dialog.show();
             }
@@ -376,7 +379,6 @@ public class KycActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        // Prevent camera provider future from leaking if activity is destroyed quickly
         if (cameraProviderFuture != null) {
             cameraProviderFuture.cancel(true);
         }
