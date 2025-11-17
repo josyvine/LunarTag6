@@ -46,7 +46,7 @@ public class ScheduleEditorFragment extends Fragment {
             // If the feature is enabled, make the editor UI visible.
             view.setVisibility(View.VISIBLE);
             setupClickListeners();
-            loadScheduledTimestamps();
+            // loadScheduledTimestamps(); // This method does not exist yet, so it is commented out to prevent another error.
         } else {
             // If the feature is disabled, hide this entire UI.
             view.setVisibility(View.GONE);
@@ -67,4 +67,13 @@ public class ScheduleEditorFragment extends Fragment {
             @Override
             public void onClick(View v) {
                 // Logic to open a dialog to auto-generate timestamps by interval.
-                Toast.makeText(getContext()
+                Toast.makeText(getContext(), "Auto-Generate Clicked (Placeholder)", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    // You will need to implement this method later.
+    // private void loadScheduledTimestamps() {
+    //     // Logic to load and display saved timestamps.
+    // }
+}
