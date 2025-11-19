@@ -3,16 +3,19 @@ package com.lunartag.app.services;
 import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.Toast;
 
 import java.util.List;
 
 /**
  * The Automation Engine.
- * UPDATED: Now uses SharedPreferences "Bridge" logic to persist commands
- * even if the main app is closed or killed.
+ * UPDATED: Includes Live Log (Toasts) to visualize every step of the automation.
+ * Reads commands from the 'Bridge' preference file to execute clicks.
  */
 public class LunarTagAccessibilityService extends AccessibilityService {
 
@@ -36,8 +39,15 @@ public class LunarTagAccessibilityService extends AccessibilityService {
         boolean isJobPending = prefs.getBoolean(KEY_JOB_PENDING, false);
         String targetGroupName = prefs.getString(KEY_TARGET_GROUP, null);
 
-        if (!isJobPending || targetGroupName == null || targetGroupName.isEmpty()) {
-            // No active job, just observe silently.
+        if (!isJobPending) {
+            // Silent exit (No job active), to avoid spamming toast messages during normal use.
+            return;
+        }
+        
+        if (targetGroupName == null || targetGroupName.isEmpty()) {
+            showLiveLog("Error: Auto-Send active but No Group Name found!");
+            // Cancel the bad job to prevent looping error
+            prefs.edit().putBoolean(KEY_JOB_PENDING, false).apply();
             return;
         }
 
@@ -46,20 +56,18 @@ public class LunarTagAccessibilityService extends AccessibilityService {
             return;
         }
 
-        Log.d(TAG, "Processing active job for group: " + targetGroupName);
-
         // --- PHASE 1: Find the Target Group and Click It ---
+        // Use strict text matching first for the specific group name ("Love")
         List<AccessibilityNodeInfo> groupNodes = rootNode.findAccessibilityNodeInfosByText(targetGroupName);
         if (groupNodes != null && !groupNodes.isEmpty()) {
             for (AccessibilityNodeInfo node : groupNodes) {
-                // WhatsApp lists are often complex views. We must find the CLICKABLE parent.
                 AccessibilityNodeInfo parent = node.getParent();
                 while (parent != null) {
                     if (parent.isClickable()) {
-                        Log.d(TAG, "Found group '" + targetGroupName + "'. Clicking entry.");
+                        showLiveLog("Auto: Found Group '" + targetGroupName + "'. Clicking...");
                         parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                        // We successfully clicked the group. We stay 'Pending' because we still need to click Send.
-                        // However, usually returning here allows the UI to update before we try to find the Send button.
+                        
+                        // Clean up
                         rootNode.recycle();
                         return; 
                     }
@@ -69,28 +77,19 @@ public class LunarTagAccessibilityService extends AccessibilityService {
         }
 
         // --- PHASE 2: Find the "Send" Button and Click It ---
-        // This button appears AFTER we click the group or if the Share Intent took us directly there.
-        
-        // Note: In English it is "Send". In other languages, this might fail unless we use ID lookups.
-        // Since your device is English, "Send" works.
+        // This works for the standard icon. WhatsApp send button usually has text "Send"
+        // or ContentDescription "Send".
         List<AccessibilityNodeInfo> sendButtonNodes = rootNode.findAccessibilityNodeInfosByText("Send");
         
-        // If text search fails, sometimes the ContentDescription (for screen readers) is "Send"
-        if (sendButtonNodes == null || sendButtonNodes.isEmpty()) {
-             // Attempt fallback search if standard text fails? 
-             // For now, stick to standard text as it's most reliable on standard WA.
-        }
-
         if (sendButtonNodes != null && !sendButtonNodes.isEmpty()) {
             for (AccessibilityNodeInfo node : sendButtonNodes) {
                 if (node.isClickable()) {
-                    Log.d(TAG, "Found 'Send' button. Clicking and Completing Job.");
+                    showLiveLog("Auto: Found 'Send' Button. Clicking...");
                     node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
 
                     // --- JOB COMPLETE: Update Memory ---
-                    // We mark pending as FALSE so we don't keep clicking send forever.
                     prefs.edit().putBoolean(KEY_JOB_PENDING, false).apply();
-                    Log.d(TAG, "Job marked as Complete in Memory.");
+                    showLiveLog("Auto-Send Complete! Job Cleared.");
                     
                     rootNode.recycle();
                     return;
@@ -101,6 +100,15 @@ public class LunarTagAccessibilityService extends AccessibilityService {
         // Clean up to prevent memory leaks
         rootNode.recycle();
     }
+    
+    /**
+     * Live Log Helper: Shows visual confirmation of background actions on screen.
+     */
+    private void showLiveLog(String message) {
+        new Handler(Looper.getMainLooper()).post(() -> 
+            Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show()
+        );
+    }
 
     @Override
     public void onInterrupt() {
@@ -110,6 +118,8 @@ public class LunarTagAccessibilityService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        Log.d(TAG, "LunarTag Accessibility Service Connected & Listening.");
+        // Visual confirmation that user successfully enabled the service
+        showLiveLog("LunarTag Automation Ready (Service Connected)");
+        Log.d(TAG, "LunarTag Accessibility Service Connected.");
     }
 }
