@@ -1,6 +1,6 @@
 package com.lunartag.app.ui.gallery;
 
-import android.content.Context;
+import android.content.Context; 
 import android.content.Intent;
 import android.net.Uri;
 import android.view.LayoutInflater;
